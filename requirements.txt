@@ -1,0 +1,30 @@
+# --- API ---
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
+
+# --- Orchestration RAG ---
+langchain==0.3.14
+langchain-community==0.3.14
+langchain-chroma==0.1.4
+langchain-huggingface==0.1.2
+langchain-ollama==0.2.2
+
+# --- Embeddings ---
+sentence-transformers==3.3.1
+
+# --- Base vectorielle ---
+chromadb==0.5.23
+
+# --- Stockage objet ---
+minio==7.2.13
+
+# --- Utilitaires ---
+pydantic==2.10.5
+pydantic-settings==2.7.1
+python-dotenv==1.0.1
+requests==2.32.3
+
+# --- Tests ---
+pytest==8.3.4
+httpx==0.28.1
