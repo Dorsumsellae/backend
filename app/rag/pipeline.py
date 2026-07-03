@@ -11,6 +11,9 @@ from app.rag.chunking import split_text
 from app.rag.prompt import build_prompt
 from app.rag.vectorstore import get_vectorstore
 
+# Longueur de l'extrait conserve dans les metadonnees pour l'affichage des sources.
+EXCERPT_MAX_CHARS = 200
+
 
 def get_llm() -> OllamaLLM:
     """Retourne le client LLM Ollama configure."""
@@ -18,35 +21,47 @@ def get_llm() -> OllamaLLM:
 
 
 def index_document(filename: str, text: str) -> int:
-    """Indexe un document dans la base vectorielle.
-
-    Etapes :
-        1. decouper `text` en passages (split_text) ;
-        2. construire les metadonnees (filename, passage_id, extrait) ;
-        3. ajouter les passages au vectorstore (embeddings automatiques).
-
-    Returns:
-        Le nombre de passages indexes.
-
-    TODO (etudiant) : implementer l'ajout au vectorstore.
-    """
+    """Decoupe le document, l'ajoute au vectorstore et retourne le nombre de passages."""
     chunks = split_text(text)
-    _ = chunks  # a stocker via get_vectorstore().add_texts(...)
-    raise NotImplementedError
+    if not chunks:
+        return 0
+
+    texts = [chunk.text for chunk in chunks]
+    metadatas = [
+        {
+            "filename": filename,
+            "passage_id": chunk.passage_id,
+            "excerpt": _excerpt(chunk.text),
+        }
+        for chunk in chunks
+    ]
+    get_vectorstore().add_texts(texts=texts, metadatas=metadatas)
+    return len(chunks)
 
 
 def answer_question(question: str, top_k: int | None = None) -> dict:
-    """Repond a une question a partir des passages indexes.
-
-    Etapes :
-        1. recherche de similarite (top_k passages) ;
-        2. construction du prompt enrichi (build_prompt) ;
-        3. generation via le LLM ;
-        4. retour de la reponse + sources.
-
-    TODO (etudiant) : implementer la recherche et l'appel LLM.
-    """
+    """Recherche les passages proches, interroge le LLM et retourne reponse + sources."""
     k = top_k or settings.top_k
-    _store = get_vectorstore()
-    _ = (k, _store, build_prompt)
-    raise NotImplementedError
+    results = get_vectorstore().similarity_search_with_score(question, k=k)
+
+    passages = [document.page_content for document, _ in results]
+    sources = [
+        {
+            "filename": document.metadata.get("filename", ""),
+            "passage_id": document.metadata.get("passage_id", -1),
+            "excerpt": document.metadata.get("excerpt", ""),
+            "score": float(score),
+        }
+        for document, score in results
+    ]
+
+    prompt = build_prompt(question, passages)
+    answer = get_llm().invoke(prompt)
+    return {"answer": answer, "sources": sources}
+
+
+def _excerpt(text: str) -> str:
+    """Tronque un passage pour ne stocker qu'un court extrait lisible."""
+    if len(text) <= EXCERPT_MAX_CHARS:
+        return text
+    return text[:EXCERPT_MAX_CHARS].rstrip() + "..."

@@ -21,8 +21,7 @@ def get_vectorstore() -> Chroma:
 
 
 def reset_collection() -> None:
-    """Vide la collection vectorielle (bonus : bouton de reinitialisation).
-
-    TODO (etudiant) : supprimer puis recreer la collection.
-    """
-    raise NotImplementedError
+    """Vide la collection : suppression cote serveur puis recreation au prochain acces."""
+    client = chromadb.HttpClient(host=settings.chroma_host, port=settings.chroma_port)
+    client.delete_collection(settings.chroma_collection)
+    get_vectorstore.cache_clear()
