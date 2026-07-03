@@ -12,6 +12,18 @@ class IndexResponse(BaseModel):
     chunks_indexed: int
 
 
+class DocumentInfo(BaseModel):
+    filename: str = Field(..., description="Nom du document indexe.")
+    chunks_indexed: int = Field(
+        ..., description="Nombre de passages (chunks) indexes pour ce document."
+    )
+
+
+class DocumentsResponse(BaseModel):
+    documents: list[DocumentInfo]
+    count: int = Field(..., description="Nombre de documents indexes distincts.")
+
+
 class AskRequest(BaseModel):
     question: str = Field(..., description="Question en langage naturel.")
     top_k: int | None = Field(None, description="Nombre de passages a recuperer.")

@@ -1,16 +1,20 @@
 """Endpoints de l'API RAG.
 
-    GET  /health   -> disponibilite du service
-    POST /upload   -> envoi du document (stockage MinIO)
-    POST /index    -> indexation du document (chunks -> embeddings -> ChromaDB)
-    POST /ask      -> question -> reponse generee + sources
+    GET  /health    -> disponibilite du service
+    POST /upload    -> envoi du document (stockage MinIO)
+    POST /index     -> indexation du document (chunks -> embeddings -> ChromaDB)
+    GET  /documents -> liste des documents indexes
+    POST /ask       -> question -> reponse generee + sources
 """
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
+from minio.error import S3Error
 
 from app.api.schemas import (
     AskRequest,
     AskResponse,
+    DocumentInfo,
+    DocumentsResponse,
     IndexRequest,
     IndexResponse,
 )
@@ -39,9 +43,30 @@ async def upload(file: UploadFile = File(...)) -> dict:
 @router.post("/index", response_model=IndexResponse, tags=["rag"])
 def index(req: IndexRequest) -> IndexResponse:
     """Indexe un document deja stocke dans MinIO."""
-    text = minio_client.get_document(req.filename)
+    try:
+        text = minio_client.get_document(req.filename)
+    except S3Error as exc:
+        if exc.code == "NoSuchKey":
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"Document '{req.filename}' introuvable dans MinIO. "
+                    "Uploadez-le d'abord via /upload."
+                ),
+            ) from exc
+        raise
     chunks_indexed = pipeline.index_document(req.filename, text)
     return IndexResponse(filename=req.filename, chunks_indexed=chunks_indexed)
+
+
+@router.get("/documents", response_model=DocumentsResponse, tags=["rag"])
+def documents() -> DocumentsResponse:
+    """Liste les documents actuellement indexes dans ChromaDB."""
+    docs = pipeline.list_indexed_documents()
+    return DocumentsResponse(
+        documents=[DocumentInfo(**doc) for doc in docs],
+        count=len(docs),
+    )
 
 
 @router.post("/ask", response_model=AskResponse, tags=["rag"])

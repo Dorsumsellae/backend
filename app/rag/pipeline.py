@@ -21,7 +21,11 @@ def get_llm() -> OllamaLLM:
 
 
 def index_document(filename: str, text: str) -> int:
-    """Decoupe le document, l'ajoute au vectorstore et retourne le nombre de passages."""
+    """Decoupe le document, l'ajoute au vectorstore et retourne le nombre de passages.
+
+    L'indexation est idempotente : reindexer un meme fichier remplace ses
+    passages au lieu d'en accumuler des doublons.
+    """
     chunks = split_text(text)
     if not chunks:
         return 0
@@ -35,8 +39,37 @@ def index_document(filename: str, text: str) -> int:
         }
         for chunk in chunks
     ]
-    get_vectorstore().add_texts(texts=texts, metadatas=metadatas)
+    # Identifiants deterministes : une reindexation du meme fichier ecrase les
+    # memes lignes (upsert) au lieu de creer des doublons.
+    ids = [f"{filename}:{chunk.passage_id}" for chunk in chunks]
+
+    store = get_vectorstore()
+    # Purge d'une eventuelle indexation precedente du meme document : evite les
+    # passages orphelins si le document a ete raccourci depuis.
+    store._collection.delete(where={"filename": filename})
+    store.add_texts(texts=texts, metadatas=metadatas, ids=ids)
     return len(chunks)
+
+
+def list_indexed_documents() -> list[dict]:
+    """Retourne les documents indexes dans ChromaDB, avec leur nombre de passages.
+
+    Les passages sont regroupes par `filename` (metadonnee posee a l'indexation),
+    ce qui donne un document logique par fichier, trie par nom.
+    """
+    store = get_vectorstore()
+    data = store._collection.get(include=["metadatas"])
+
+    counts: dict[str, int] = {}
+    for metadata in data.get("metadatas") or []:
+        filename = (metadata or {}).get("filename")
+        if filename:
+            counts[filename] = counts.get(filename, 0) + 1
+
+    return [
+        {"filename": filename, "chunks_indexed": chunks}
+        for filename, chunks in sorted(counts.items())
+    ]
 
 
 def answer_question(question: str, top_k: int | None = None) -> dict:
