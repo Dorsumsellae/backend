@@ -15,9 +15,28 @@ from app.rag.vectorstore import get_vectorstore, reset_collection
 EXCERPT_MAX_CHARS = 200
 
 
-def get_llm() -> OllamaLLM:
-    """Retourne le client LLM Ollama configure."""
-    return OllamaLLM(model=settings.ollama_model, base_url=settings.ollama_base_url)
+def get_llm(model: str | None = None) -> OllamaLLM:
+    """Retourne le client LLM Ollama pour `model` (defaut : settings.ollama_model)."""
+    return OllamaLLM(
+        model=model or settings.ollama_model,
+        base_url=settings.ollama_base_url,
+    )
+
+
+def list_available_models() -> list[str]:
+    """Liste les modeles disponibles cote Ollama, tries par nom.
+
+    Interroge l'API `GET {ollama_base_url}/api/tags`. Permet au front de
+    proposer un selecteur de modele. Leve `requests.RequestException` si le
+    serveur Ollama est injoignable (a traiter par l'appelant).
+    """
+    import requests
+
+    url = f"{settings.ollama_base_url.rstrip('/')}/api/tags"
+    response = requests.get(url, timeout=5)
+    response.raise_for_status()
+    models = response.json().get("models") or []
+    return sorted(m["name"] for m in models if m.get("name"))
 
 
 def index_document(filename: str, text: str, strategy: str | None = None) -> int:
@@ -113,9 +132,16 @@ def reset_index(filename: str | None = None) -> dict:
     }
 
 
-def answer_question(question: str, top_k: int | None = None) -> dict:
-    """Recherche les passages proches, interroge le LLM et retourne reponse + sources."""
+def answer_question(
+    question: str, top_k: int | None = None, model: str | None = None
+) -> dict:
+    """Recherche les passages proches, interroge le LLM et retourne reponse + sources.
+
+    `model` selectionne le modele Ollama repondant (defaut : settings.ollama_model).
+    Le modele reellement utilise est renvoye dans la cle "model".
+    """
     k = top_k or settings.top_k
+    model_name = model or settings.ollama_model
     results = get_vectorstore().similarity_search_with_score(question, k=k)
 
     passages = [document.page_content for document, _ in results]
@@ -130,8 +156,8 @@ def answer_question(question: str, top_k: int | None = None) -> dict:
     ]
 
     prompt = build_prompt(question, passages)
-    answer = get_llm().invoke(prompt)
-    return {"answer": answer, "sources": sources}
+    answer = get_llm(model_name).invoke(prompt)
+    return {"answer": answer, "sources": sources, "model": model_name}
 
 
 def _excerpt(text: str) -> str:

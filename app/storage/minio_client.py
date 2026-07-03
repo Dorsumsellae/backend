@@ -4,6 +4,7 @@ Si vous choisissez de ne pas utiliser MinIO (stockage local a la place),
 expliquez ce choix dans le README (comme demande dans le sujet).
 """
 
+import mimetypes
 from functools import lru_cache
 from io import BytesIO
 
@@ -26,25 +27,40 @@ def get_client() -> Minio:
     return client
 
 
-def put_document(filename: str, content: bytes) -> str:
-    """Stocke un document dans le bucket et retourne son nom d'objet."""
+def put_document(filename: str, content: bytes, content_type: str | None = None) -> str:
+    """Stocke un document (octets bruts) dans le bucket et retourne son nom d'objet.
+
+    `content_type` est deduit de l'extension si non fourni (ex. application/pdf),
+    ce qui permet de conserver des documents binaires comme les PDF.
+    """
     client = get_client()
+    if not content_type:
+        content_type = mimetypes.guess_type(filename)[0] or "application/octet-stream"
     client.put_object(
         settings.minio_bucket,
         filename,
         BytesIO(content),
         length=len(content),
-        content_type="text/plain",
+        content_type=content_type,
     )
     return filename
 
 
-def get_document(filename: str) -> str:
-    """Recupere le contenu texte d'un document stocke."""
+def get_document_bytes(filename: str) -> bytes:
+    """Recupere le contenu binaire brut d'un document stocke."""
     client = get_client()
     response = client.get_object(settings.minio_bucket, filename)
     try:
-        return response.read().decode("utf-8")
+        return response.read()
     finally:
         response.close()
         response.release_conn()
+
+
+def get_document(filename: str) -> str:
+    """Recupere le contenu texte (UTF-8) d'un document stocke.
+
+    Conserve pour compatibilite ; pour les documents binaires (PDF), utiliser
+    `get_document_bytes` puis `app.rag.loaders.extract_text`.
+    """
+    return get_document_bytes(filename).decode("utf-8")

@@ -19,6 +19,9 @@ chromadb==0.5.23
 # --- Stockage objet ---
 minio==7.2.13
 
+# --- Extraction de documents (PDF non scannes) ---
+pypdf==6.14.2
+
 # --- Utilitaires ---
 pydantic==2.10.5
 pydantic-settings==2.7.1

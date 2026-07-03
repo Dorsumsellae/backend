@@ -57,6 +57,13 @@ class DocumentsResponse(BaseModel):
 class AskRequest(BaseModel):
     question: str = Field(..., description="Question en langage naturel.")
     top_k: int | None = Field(None, description="Nombre de passages a recuperer.")
+    model: str | None = Field(
+        None,
+        description=(
+            "Modele Ollama a utiliser pour la reponse (ex. 'qwen2.5:0.5b', "
+            "'llama3.2:1b'). Si omis, le modele par defaut du serveur est utilise."
+        ),
+    )
 
 
 class Source(BaseModel):
@@ -70,3 +77,16 @@ class AskResponse(BaseModel):
     question: str
     answer: str
     sources: list[Source]
+    model: str = Field(..., description="Modele Ollama ayant genere la reponse.")
+
+
+class ModelInfo(BaseModel):
+    name: str = Field(..., description="Identifiant du modele Ollama.")
+    is_default: bool = Field(
+        ..., description="Vrai si c'est le modele par defaut du serveur."
+    )
+
+
+class ModelsResponse(BaseModel):
+    models: list[ModelInfo]
+    default: str = Field(..., description="Modele utilise quand aucun n'est precise.")
