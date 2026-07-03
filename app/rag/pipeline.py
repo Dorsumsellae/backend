@@ -9,7 +9,7 @@ from langchain_ollama import OllamaLLM
 from app.config import settings
 from app.rag.chunking import split_text
 from app.rag.prompt import build_prompt
-from app.rag.vectorstore import get_vectorstore
+from app.rag.vectorstore import get_vectorstore, reset_collection
 
 # Longueur de l'extrait conserve dans les metadonnees pour l'affichage des sources.
 EXCERPT_MAX_CHARS = 200
@@ -70,6 +70,44 @@ def list_indexed_documents() -> list[dict]:
         {"filename": filename, "chunks_indexed": chunks}
         for filename, chunks in sorted(counts.items())
     ]
+
+
+def reset_index(filename: str | None = None) -> dict:
+    """Reinitialise l'indexation et retourne un compte-rendu de la suppression.
+
+    - `filename` fourni : desindexe uniquement ce document (les autres restent).
+    - `filename` omis : vide entierement la collection ChromaDB.
+
+    Le compte-rendu (`documents_removed`, `chunks_removed`) est calcule avant
+    la suppression pour renvoyer au front ce qui a reellement ete retire.
+    """
+    store = get_vectorstore()
+
+    if filename:
+        existing = store._collection.get(where={"filename": filename}, include=[])
+        chunks_removed = len(existing.get("ids") or [])
+        if chunks_removed:
+            store._collection.delete(where={"filename": filename})
+        return {
+            "scope": "document",
+            "documents_removed": 1 if chunks_removed else 0,
+            "chunks_removed": chunks_removed,
+        }
+
+    # Reset complet : on inventorie avant de vider pour renvoyer les totaux.
+    data = store._collection.get(include=["metadatas"])
+    filenames = {
+        (metadata or {}).get("filename")
+        for metadata in (data.get("metadatas") or [])
+        if (metadata or {}).get("filename")
+    }
+    chunks_removed = len(data.get("ids") or [])
+    reset_collection()
+    return {
+        "scope": "all",
+        "documents_removed": len(filenames),
+        "chunks_removed": chunks_removed,
+    }
 
 
 def answer_question(question: str, top_k: int | None = None) -> dict:

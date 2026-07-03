@@ -5,6 +5,7 @@
     POST /index     -> indexation du document (chunks -> embeddings -> ChromaDB)
     GET  /documents -> liste des documents indexes
     POST /ask       -> question -> reponse generee + sources
+    POST /reset     -> reinitialise l'indexation (tout ou un document)
 """
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -17,6 +18,8 @@ from app.api.schemas import (
     DocumentsResponse,
     IndexRequest,
     IndexResponse,
+    ResetRequest,
+    ResetResponse,
 )
 from app.rag import pipeline
 from app.storage import minio_client
@@ -67,6 +70,18 @@ def documents() -> DocumentsResponse:
         documents=[DocumentInfo(**doc) for doc in docs],
         count=len(docs),
     )
+
+
+@router.post("/reset", response_model=ResetResponse, tags=["rag"])
+def reset(req: ResetRequest | None = None) -> ResetResponse:
+    """Reinitialise l'indexation.
+
+    Corps optionnel : sans corps (ou `filename` a null) toute la collection est
+    videe ; avec `{"filename": "..."}` seul ce document est desindexe.
+    """
+    filename = req.filename if req else None
+    result = pipeline.reset_index(filename)
+    return ResetResponse(**result)
 
 
 @router.post("/ask", response_model=AskResponse, tags=["rag"])

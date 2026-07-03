@@ -12,6 +12,26 @@ class IndexResponse(BaseModel):
     chunks_indexed: int
 
 
+class ResetRequest(BaseModel):
+    filename: str | None = Field(
+        None,
+        description=(
+            "Document a desindexer. Si omis (ou null), toute l'indexation "
+            "est reinitialisee."
+        ),
+    )
+
+
+class ResetResponse(BaseModel):
+    scope: str = Field(
+        ..., description="'all' (toute la collection) ou 'document' (un seul fichier)."
+    )
+    documents_removed: int = Field(
+        ..., description="Nombre de documents distincts desindexes."
+    )
+    chunks_removed: int = Field(..., description="Nombre de passages supprimes.")
+
+
 class DocumentInfo(BaseModel):
     filename: str = Field(..., description="Nom du document indexe.")
     chunks_indexed: int = Field(
