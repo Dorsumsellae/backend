@@ -20,13 +20,16 @@ def get_llm() -> OllamaLLM:
     return OllamaLLM(model=settings.ollama_model, base_url=settings.ollama_base_url)
 
 
-def index_document(filename: str, text: str) -> int:
+def index_document(filename: str, text: str, strategy: str | None = None) -> int:
     """Decoupe le document, l'ajoute au vectorstore et retourne le nombre de passages.
 
     L'indexation est idempotente : reindexer un meme fichier remplace ses
     passages au lieu d'en accumuler des doublons.
+
+    `strategy` selectionne le decoupage ("fixed" ou "recursive") ; par defaut,
+    la valeur de configuration `settings.chunk_strategy` est utilisee.
     """
-    chunks = split_text(text)
+    chunks = split_text(text, strategy=strategy)
     if not chunks:
         return 0
 

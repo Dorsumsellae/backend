@@ -1,10 +1,20 @@
 """Schemas Pydantic pour les requetes et reponses de l'API."""
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
 class IndexRequest(BaseModel):
     filename: str = Field(..., description="Nom du fichier a indexer (dans MinIO).")
+    strategy: Literal["fixed", "recursive"] | None = Field(
+        None,
+        description=(
+            "Strategie de decoupage : 'fixed' (taille fixe avec recouvrement) ou "
+            "'recursive' (respecte paragraphes -> phrases -> mots). Si omis, la "
+            "valeur par defaut du serveur est utilisee (chunk_strategy = 'fixed')."
+        ),
+    )
 
 
 class IndexResponse(BaseModel):

@@ -58,7 +58,7 @@ def index(req: IndexRequest) -> IndexResponse:
                 ),
             ) from exc
         raise
-    chunks_indexed = pipeline.index_document(req.filename, text)
+    chunks_indexed = pipeline.index_document(req.filename, text, strategy=req.strategy)
     return IndexResponse(filename=req.filename, chunks_indexed=chunks_indexed)
 
 
