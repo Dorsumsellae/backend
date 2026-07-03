@@ -38,5 +38,10 @@ class Settings(BaseSettings):
     chunk_overlap: int = 120
     top_k: int = 4
 
+    # Strategie de decoupage par defaut (surchargeable par requete) :
+    #   "fixed"     -> taille fixe avec recouvrement (autonome, sans LangChain).
+    #   "recursive" -> RecursiveCharacterTextSplitter (paragraphes -> phrases -> mots).
+    chunk_strategy: str = "fixed"
+
 
 settings = Settings()
