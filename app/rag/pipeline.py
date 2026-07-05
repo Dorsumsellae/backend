@@ -236,6 +236,7 @@ def reset_index(workspace: str, filename: str | None = None) -> dict:
 
     return {
         "scope": "document" if filename else "workspace",
+        "workspace": workspace,
         "documents_removed": (1 if chunks_removed else 0) if filename else len(filenames),
         "chunks_removed": chunks_removed,
     }

@@ -265,6 +265,7 @@ def test_reset_workspace_leaves_others_intact(store):
     report = pipeline.reset_index("alpha")
 
     assert report["scope"] == "workspace"
+    assert report["workspace"] == "alpha"  # requis par ResetResponse (route /reset)
     assert report["documents_removed"] == 1
     assert pipeline.list_workspaces() == ["beta"]  # beta intact
 
@@ -276,6 +277,7 @@ def test_reset_single_document(store):
     report = pipeline.reset_index("alpha", filename="a.txt")
 
     assert report["scope"] == "document"
+    assert report["workspace"] == "alpha"  # requis par ResetResponse (route /reset)
     assert report["documents_removed"] == 1
     remaining = [d["filename"] for d in pipeline.list_indexed_documents("alpha")]
     assert remaining == ["b.txt"]
