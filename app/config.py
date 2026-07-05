@@ -43,5 +43,14 @@ class Settings(BaseSettings):
     #   "recursive" -> RecursiveCharacterTextSplitter (paragraphes -> phrases -> mots).
     chunk_strategy: str = "fixed"
 
+    # Workspace utilise quand aucun n'est precise (cloisonnement logique des documents).
+    default_workspace: str = "default"
+
+    # Service ASR (transcription audio) appele en fallback quand une video YouTube
+    # n'a pas de sous-titres. Vide => fallback desactive (on renvoie une erreur claire).
+    asr_service_url: str = ""
+    # Duree max d'attente de la transcription ASR (secondes). L'ASR est lent (CPU).
+    asr_timeout: int = 900
+
 
 settings = Settings()

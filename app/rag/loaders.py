@@ -17,7 +17,10 @@ from io import BytesIO
 # Extensions traitees comme texte brut.
 TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".text"}
 PDF_EXTENSIONS = {".pdf"}
-SUPPORTED_EXTENSIONS = TEXT_EXTENSIONS | PDF_EXTENSIONS
+# Transcripts horodates : traites a part par `app.rag.transcripts` a l'indexation,
+# mais acceptes a l'upload au meme titre que les autres formats.
+TRANSCRIPT_EXTENSIONS = {".srt", ".vtt"}
+SUPPORTED_EXTENSIONS = TEXT_EXTENSIONS | PDF_EXTENSIONS | TRANSCRIPT_EXTENSIONS
 
 
 def is_supported(filename: str) -> bool:

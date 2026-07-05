@@ -13,6 +13,15 @@ from minio import Minio
 from app.config import settings
 
 
+def object_name(workspace: str, filename: str) -> str:
+    """Cle d'objet MinIO d'un document, prefixee par son workspace.
+
+    Deux workspaces peuvent ainsi stocker un fichier de meme nom sans collision
+    (`{workspace}/{filename}`), a l'image du cloisonnement cote base vectorielle.
+    """
+    return f"{workspace}/{filename}"
+
+
 @lru_cache(maxsize=1)
 def get_client() -> Minio:
     """Retourne le client MinIO (et cree le bucket si necessaire)."""
