@@ -3,8 +3,11 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .eggs/
+# Environnements virtuels (toutes variantes : .venv, .venv312, .venv-test, ...)
 .venv/
+.venv*/
 venv/
+venv*/
 env/
 .pytest_cache/
 .mypy_cache/

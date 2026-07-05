@@ -1,33 +1,40 @@
 # --- API ---
-fastapi==0.115.6
-uvicorn[standard]==0.34.0
-python-multipart==0.0.20
+fastapi==0.139.0
+uvicorn[standard]==0.50.0
+python-multipart==0.0.32
 
 # --- Orchestration RAG ---
-langchain==0.3.14
-langchain-community==0.3.14
-langchain-chroma==0.1.4
-langchain-huggingface==0.1.2
-langchain-ollama==0.2.2
+langchain==1.3.11
+langchain-community==0.4.2
+langchain-chroma==1.1.0
+langchain-huggingface==1.2.2
+langchain-ollama==1.1.0
 
 # --- Embeddings ---
-sentence-transformers==3.3.1
+sentence-transformers==5.6.0
 
 # --- Base vectorielle ---
-chromadb==0.5.23
+# NB : le client chromadb et l'image serveur (docker-compose) doivent partager
+# le meme major (1.x) pour parler le meme protocole d'API.
+chromadb==1.5.9
 
 # --- Stockage objet ---
-minio==7.2.13
+minio==7.2.20
 
 # --- Extraction de documents (PDF non scannes) ---
 pypdf==6.14.2
 
+# --- Transcripts YouTube (recuperation des sous-titres) ---
+# 1.x : API instanciee + parsing compatible avec l'API YouTube actuelle
+# (les versions 0.6.x cassent avec "no element found").
+youtube-transcript-api==1.2.4
+
 # --- Utilitaires ---
-pydantic==2.10.5
-pydantic-settings==2.7.1
-python-dotenv==1.0.1
-requests==2.32.3
+pydantic==2.13.4
+pydantic-settings==2.14.2
+python-dotenv==1.2.2
+requests==2.34.2
 
 # --- Tests ---
-pytest==8.3.4
+pytest==9.1.1
 httpx==0.28.1
