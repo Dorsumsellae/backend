@@ -8,22 +8,39 @@ from langchain_ollama import OllamaLLM
 
 from app.config import settings
 from app.rag.chunking import split_text
-from app.rag.prompt import build_prompt
+from app.rag.prompt import build_chat_prompt, build_prompt, cited_indices
 from app.rag.vectorstore import get_vectorstore
 
 # Longueur de l'extrait conserve dans les metadonnees pour l'affichage des sources.
 EXCERPT_MAX_CHARS = 200
 
 
-def _where(workspace: str, filename: str | None = None) -> dict:
-    """Construit le filtre ChromaDB restreignant a un workspace (et un document).
+def _where(
+    workspace: str,
+    filename: str | None = None,
+    filenames: list[str] | None = None,
+) -> dict:
+    """Construit le filtre ChromaDB restreignant a un workspace (et des documents).
 
-    ChromaDB exige un operateur `$and` explicite pour combiner plusieurs cles ;
-    avec une seule condition, on renvoie le filtre simple attendu.
+    Trois portees possibles :
+      - tout le workspace (ni `filename` ni `filenames`) ;
+      - un seul document (`filename`) ;
+      - un sous-ensemble de documents (`filenames`, via l'operateur `$in`).
+
+    `filename` (document unique) est prioritaire si les deux sont fournis. Une liste
+    `filenames` d'un seul element retombe sur une egalite simple, et une liste vide
+    est ignoree (= tout le workspace) : on n'emet jamais `{"$in": []}` qui ne
+    matcherait rien. ChromaDB exige un `$and` explicite pour combiner plusieurs cles.
     """
     clauses: list[dict] = [{"workspace": workspace}]
     if filename:
         clauses.append({"filename": filename})
+    elif filenames:
+        clauses.append(
+            {"filename": filenames[0]}
+            if len(filenames) == 1
+            else {"filename": {"$in": filenames}}
+        )
     return clauses[0] if len(clauses) == 1 else {"$and": clauses}
 
 
@@ -132,24 +149,54 @@ def index_transcript(
     return _store_passages(workspace, filename, passages)
 
 
+def _document_type(filename: str, metadata: dict) -> str:
+    """Devine le type/origine d'une source a partir de ses metadonnees de passage.
+
+    Renvoie 'youtube' (transcript video avec URL), 'transcript' (sous-titres sans
+    URL), 'pdf', ou 'text'. Sert a l'affichage (icone de source cote front).
+    """
+    is_transcript = metadata.get("content_type") == "transcript" or filename.startswith("youtube_")
+    if is_transcript:
+        if metadata.get("source_url") or filename.startswith("youtube_"):
+            return "youtube"
+        return "transcript"
+    if filename.lower().endswith(".pdf"):
+        return "pdf"
+    return "text"
+
+
 def list_indexed_documents(workspace: str) -> list[dict]:
     """Retourne les documents indexes d'un `workspace`, avec leur nombre de passages.
 
     Les passages sont regroupes par `filename` (metadonnee posee a l'indexation),
-    ce qui donne un document logique par fichier, trie par nom.
+    ce qui donne un document logique par fichier, trie par nom. Chaque entree porte
+    aussi un `type` (text/pdf/youtube/transcript) et un `source_url` eventuel,
+    derives des metadonnees deja presentes (aucun read supplementaire).
     """
     store = get_vectorstore()
     data = store._collection.get(where=_where(workspace), include=["metadatas"])
 
     counts: dict[str, int] = {}
+    types: dict[str, str] = {}
+    urls: dict[str, str | None] = {}
     for metadata in data.get("metadatas") or []:
-        filename = (metadata or {}).get("filename")
-        if filename:
-            counts[filename] = counts.get(filename, 0) + 1
+        metadata = metadata or {}
+        filename = metadata.get("filename")
+        if not filename:
+            continue
+        counts[filename] = counts.get(filename, 0) + 1
+        types.setdefault(filename, _document_type(filename, metadata))
+        if not urls.get(filename) and metadata.get("source_url"):
+            urls[filename] = metadata.get("source_url")
 
     return [
-        {"filename": filename, "chunks_indexed": chunks}
-        for filename, chunks in sorted(counts.items())
+        {
+            "filename": filename,
+            "chunks_indexed": counts[filename],
+            "type": types.get(filename, "text"),
+            "source_url": urls.get(filename),
+        }
+        for filename in sorted(counts)
     ]
 
 
@@ -194,33 +241,91 @@ def reset_index(workspace: str, filename: str | None = None) -> dict:
     }
 
 
+def _search_sources(question: str, workspace: str, k: int, filename=None, filenames=None):
+    """Recherche les passages proches et renvoie (passages_texte, sources).
+
+    Chaque source recoit un index de citation `cite` (1-based) egal a sa position
+    dans le classement de similarite : il correspond au numero `[n]` du passage
+    dans le contexte du prompt, ce qui permet au front de lier reponse et sources.
+    """
+    results = get_vectorstore().similarity_search_with_score(
+        question, k=k, filter=_where(workspace, filename, filenames)
+    )
+    passages = [document.page_content for document, _ in results]
+    sources = [
+        {**_build_source(document, score), "cite": i + 1}
+        for i, (document, score) in enumerate(results)
+    ]
+    return passages, sources
+
+
 def answer_question(
     question: str,
     workspace: str,
     top_k: int | None = None,
     model: str | None = None,
     filename: str | None = None,
+    filenames: list[str] | None = None,
 ) -> dict:
     """Recherche les passages proches, interroge le LLM et retourne reponse + sources.
 
-    La recherche est **restreinte au `workspace`** (et, si `filename` est fourni,
-    a ce seul document) : jamais de fuite entre espaces de travail.
+    La recherche est **restreinte au `workspace`**, et facultativement a un seul
+    document (`filename`) ou a un sous-ensemble (`filenames`) : jamais de fuite
+    entre espaces de travail.
 
     `model` selectionne le modele Ollama repondant (defaut : settings.ollama_model).
-    Le modele reellement utilise est renvoye dans la cle "model".
+    Le modele reellement utilise est renvoye dans la cle "model" ; "cited" liste les
+    numeros de passages `[n]` effectivement cites par le modele.
     """
     k = top_k or settings.top_k
     model_name = model or settings.ollama_model
-    results = get_vectorstore().similarity_search_with_score(
-        question, k=k, filter=_where(workspace, filename)
-    )
-
-    passages = [document.page_content for document, _ in results]
-    sources = [_build_source(document, score) for document, score in results]
+    passages, sources = _search_sources(question, workspace, k, filename, filenames)
 
     prompt = build_prompt(question, passages)
     answer = get_llm(model_name).invoke(prompt)
-    return {"answer": answer, "sources": sources, "model": model_name}
+    return {
+        "answer": answer,
+        "sources": sources,
+        "model": model_name,
+        "cited": cited_indices(answer, len(sources)),
+    }
+
+
+def _latest_user_message(messages: list[dict]) -> str:
+    """Retourne le contenu du dernier message de role 'user' (pilote le retrieval)."""
+    for message in reversed(messages):
+        if message.get("role") == "user":
+            return message.get("content") or ""
+    return ""
+
+
+def answer_chat(
+    messages: list[dict],
+    workspace: str,
+    top_k: int | None = None,
+    model: str | None = None,
+    filenames: list[str] | None = None,
+) -> dict:
+    """Repond a un tour de conversation en s'appuyant sur les documents du workspace.
+
+    Le retrieval est pilote par le **dernier message utilisateur** ; le prompt inclut
+    les derniers tours de la conversation (memoire multi-tours). Le serveur reste
+    **stateless** : l'historique est fourni par l'appelant. La recherche peut etre
+    restreinte a un sous-ensemble de documents (`filenames`).
+    """
+    k = top_k or settings.top_k
+    model_name = model or settings.ollama_model
+    question = _latest_user_message(messages)
+    passages, sources = _search_sources(question, workspace, k, filenames=filenames)
+
+    prompt = build_chat_prompt(messages, passages)
+    answer = get_llm(model_name).invoke(prompt)
+    return {
+        "answer": answer,
+        "sources": sources,
+        "model": model_name,
+        "cited": cited_indices(answer, len(sources)),
+    }
 
 
 def _build_source(document, score) -> dict:

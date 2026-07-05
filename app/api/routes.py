@@ -8,6 +8,7 @@
     GET  /workspaces      -> liste des workspaces existants
     GET  /models          -> liste des modeles Ollama disponibles
     POST /ask             -> question -> reponse generee + sources (cloisonnee au workspace)
+    POST /chat            -> conversation multi-tours -> reponse + sources (cloisonnee)
     POST /reset           -> reinitialise l'indexation (workspace entier ou un document)
 """
 
@@ -18,6 +19,8 @@ from minio.error import S3Error
 from app.api.schemas import (
     AskRequest,
     AskResponse,
+    ChatRequest,
+    ChatResponse,
     DocumentInfo,
     DocumentsResponse,
     IndexRequest,
@@ -400,10 +403,43 @@ def ask(req: AskRequest) -> AskResponse:
         top_k=req.top_k,
         model=req.model,
         filename=req.filename,
+        filenames=req.filenames,
     )
     return AskResponse(
         question=req.question,
         answer=result["answer"],
         sources=result["sources"],
         model=result["model"],
+        cited=result.get("cited"),
+    )
+
+
+@router.post("/chat", response_model=ChatResponse, tags=["rag"])
+def chat(req: ChatRequest) -> ChatResponse:
+    """Repond a un tour de conversation, en s'appuyant sur les documents du workspace.
+
+    Chat **multi-tours** : le client envoie l'historique complet (`messages`) ; le
+    retrieval est pilote par le dernier message utilisateur et la reponse tient
+    compte des echanges precedents. La recherche est cloisonnee au workspace et peut
+    etre restreinte a un sous-ensemble de documents (`filenames`). Le serveur reste
+    stateless (aucun stockage de session).
+    """
+    ws = _resolve_workspace(req.workspace)
+    if not req.messages or req.messages[-1].role != "user":
+        raise HTTPException(
+            status_code=400,
+            detail="Le dernier message doit etre une question de l'utilisateur.",
+        )
+    result = pipeline.answer_chat(
+        [message.model_dump() for message in req.messages],
+        workspace=ws,
+        top_k=req.top_k,
+        model=req.model,
+        filenames=req.filenames,
+    )
+    return ChatResponse(
+        answer=result["answer"],
+        sources=result["sources"],
+        model=result["model"],
+        cited=result.get("cited"),
     )

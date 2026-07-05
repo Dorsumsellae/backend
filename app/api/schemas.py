@@ -58,6 +58,13 @@ class DocumentInfo(BaseModel):
     chunks_indexed: int = Field(
         ..., description="Nombre de passages (chunks) indexes pour ce document."
     )
+    type: str = Field(
+        "text",
+        description="Origine/type de la source : 'text', 'pdf', 'youtube' ou 'transcript'.",
+    )
+    source_url: str | None = Field(
+        None, description="URL de la source (ex. video YouTube), si connue."
+    )
 
 
 class DocumentsResponse(BaseModel):
@@ -83,6 +90,14 @@ class AskRequest(BaseModel):
             "recherche porte sur tous les documents du workspace."
         ),
     )
+    filenames: list[str] | None = Field(
+        None,
+        description=(
+            "Restreint la recherche a cet ensemble de documents du workspace. "
+            "Ignore si `filename` (document unique) est fourni. Si omis ou vide, "
+            "la recherche porte sur tous les documents du workspace."
+        ),
+    )
     top_k: int | None = Field(None, description="Nombre de passages a recuperer.")
     model: str | None = Field(
         None,
@@ -98,6 +113,13 @@ class Source(BaseModel):
     passage_id: int
     excerpt: str
     score: float | None = None
+    cite: int | None = Field(
+        None,
+        description=(
+            "Index de citation du passage (1-based) : correspond aux marqueurs "
+            "`[n]` presents dans la reponse, pour lier reponse et sources."
+        ),
+    )
     # Champs presents uniquement pour les passages issus d'un transcript horodate.
     start_seconds: float | None = Field(
         None, description="Instant de debut du passage dans la video (secondes)."
@@ -118,6 +140,50 @@ class AskResponse(BaseModel):
     answer: str
     sources: list[Source]
     model: str = Field(..., description="Modele Ollama ayant genere la reponse.")
+    cited: list[int] | None = Field(
+        None,
+        description="Numeros de passages `[n]` reellement cites dans la reponse.",
+    )
+
+
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"] = Field(
+        ..., description="Auteur du message : 'user' (question) ou 'assistant' (reponse)."
+    )
+    content: str = Field(..., description="Contenu textuel du message.")
+
+
+class ChatRequest(BaseModel):
+    messages: list[ChatMessage] = Field(
+        ...,
+        description=(
+            "Historique complet de la conversation (le dernier message doit etre "
+            "une question de role 'user'). Le serveur reste stateless : l'historique "
+            "est fourni a chaque appel."
+        ),
+    )
+    workspace: str | None = Field(None, description=_WORKSPACE_DESC)
+    filenames: list[str] | None = Field(
+        None,
+        description=(
+            "Restreint la recherche a cet ensemble de documents du workspace. Si "
+            "omis ou vide, la recherche porte sur tous les documents du workspace."
+        ),
+    )
+    top_k: int | None = Field(None, description="Nombre de passages a recuperer.")
+    model: str | None = Field(
+        None, description="Modele Ollama a utiliser (defaut : modele serveur)."
+    )
+
+
+class ChatResponse(BaseModel):
+    answer: str
+    sources: list[Source]
+    model: str = Field(..., description="Modele Ollama ayant genere la reponse.")
+    cited: list[int] | None = Field(
+        None,
+        description="Numeros de passages `[n]` reellement cites dans la reponse.",
+    )
 
 
 class IngestYoutubeRequest(BaseModel):

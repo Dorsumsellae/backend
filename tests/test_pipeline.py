@@ -36,6 +36,24 @@ def test_where_with_filename_uses_and_operator():
     }
 
 
+def test_where_with_filenames_uses_in_operator():
+    assert _where("ws", filenames=["a.txt", "b.txt"]) == {
+        "$and": [{"workspace": "ws"}, {"filename": {"$in": ["a.txt", "b.txt"]}}]
+    }
+
+
+def test_where_single_filename_in_list_is_equality():
+    # Une liste d'un element retombe sur une egalite simple (pas de $in inutile).
+    assert _where("ws", filenames=["a.txt"]) == {
+        "$and": [{"workspace": "ws"}, {"filename": "a.txt"}]
+    }
+
+
+def test_where_empty_filenames_is_workspace_only():
+    # Liste vide => aucune clause filename (jamais {"$in": []} qui ne matcherait rien).
+    assert _where("ws", filenames=[]) == {"workspace": "ws"}
+
+
 # --- Fixture : store ChromaDB ephemere + LLM stub ---------------------------
 
 
@@ -148,6 +166,42 @@ def test_ask_filename_restricts_to_single_document(store):
     assert {source["filename"] for source in result["sources"]} == {"a.txt"}
 
 
+def test_ask_filenames_restricts_to_subset(store):
+    pipeline.index_document("a.txt", "aaaa " * 100, workspace="alpha")
+    pipeline.index_document("b.txt", "bbbb " * 100, workspace="alpha")
+    pipeline.index_document("c.txt", "cccc " * 100, workspace="alpha")
+
+    result = pipeline.answer_question(
+        "q", workspace="alpha", top_k=10, filenames=["a.txt", "b.txt"]
+    )
+    filenames = {source["filename"] for source in result["sources"]}
+    assert "c.txt" not in filenames  # le sous-ensemble exclut c.txt
+    assert filenames <= {"a.txt", "b.txt"}
+
+
+def test_sources_carry_sequential_cite_index(store):
+    pipeline.index_document("a.txt", "contenu alpha", workspace="alpha")
+    pipeline.index_document("b.txt", "contenu beta", workspace="alpha")
+
+    result = pipeline.answer_question("une question", workspace="alpha", top_k=4)
+    cites = [source["cite"] for source in result["sources"]]
+    assert cites == list(range(1, len(result["sources"]) + 1))
+
+
+def test_answer_chat_uses_last_user_message(store):
+    pipeline.index_document("a.txt", "le chat dort " * 50, workspace="alpha")
+    messages = [
+        {"role": "user", "content": "premiere question"},
+        {"role": "assistant", "content": "premiere reponse"},
+        {"role": "user", "content": "seconde question"},
+    ]
+    result = pipeline.answer_chat(messages, workspace="alpha", top_k=4)
+
+    assert result["answer"] == "REPONSE STUB"
+    assert {source["filename"] for source in result["sources"]} == {"a.txt"}
+    assert result["model"]  # modele renseigne
+
+
 # --- Transcript : metadonnees horodatees et sources cliquables --------------
 
 
@@ -181,6 +235,27 @@ def test_list_workspaces(store):
     pipeline.index_document("a.txt", "x " * 100, workspace="alpha")
     pipeline.index_document("b.txt", "y " * 100, workspace="beta")
     assert pipeline.list_workspaces() == ["alpha", "beta"]
+
+
+def test_list_documents_reports_type_and_source_url(store):
+    from app.rag.transcripts import Cue
+
+    pipeline.index_document("notes.txt", "texte simple " * 20, workspace="alpha")
+    pipeline.index_transcript(
+        "youtube_abc.txt",
+        [Cue(start=0.0, end=5.0, text="intro de la video")],
+        workspace="alpha",
+        source_url="https://www.youtube.com/watch?v=abcdefghijk",
+    )
+
+    docs = {d["filename"]: d for d in pipeline.list_indexed_documents("alpha")}
+    assert docs["notes.txt"]["type"] == "text"
+    assert docs["notes.txt"]["source_url"] is None
+    assert docs["youtube_abc.txt"]["type"] == "youtube"
+    assert (
+        docs["youtube_abc.txt"]["source_url"]
+        == "https://www.youtube.com/watch?v=abcdefghijk"
+    )
 
 
 def test_reset_workspace_leaves_others_intact(store):
