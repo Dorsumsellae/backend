@@ -5,21 +5,31 @@ import re
 # Consigne commune : reponse ancree dans le contexte + citations numerotees.
 # Le numero cite `[n]` correspond exactement au numero du passage dans le contexte
 # (voir `_format_context`), ce qui maximise les chances qu'un petit modele cite bien.
-_CITATION_RULES = """Reponds uniquement a partir du contexte numerote ci-dessous.
-Apres chaque affirmation, cite le ou les passages utilises avec leur numero
-entre crochets, par exemple [1] ou [2][3]. N'invente aucune source.
-Si l'information n'est pas presente dans le contexte, reponds :
+# La clause de refus est volontairement conditionnelle (« si, et seulement si... ») :
+# le modele est autorise a SYNTHETISER et relier les passages, et ne doit sortir la
+# phrase de repli que si aucun passage ne permet reellement de repondre.
+_CITATION_RULES = """Tu reponds en francais, de facon claire et structuree.
+Formule d'abord une reponse REDIGEE en toutes lettres, en t'appuyant uniquement sur
+le contexte numerote ci-dessous : tu peux synthetiser, reformuler et relier les
+passages, mais n'ajoute aucun fait absent du contexte et n'invente aucune source.
+Les marqueurs entre crochets [1] ou [2][3] ne font que COMPLETER tes phrases pour
+signaler les passages utilises : ne reponds JAMAIS uniquement par des numeros de
+citation. Apres chaque affirmation, cite le ou les passages correspondants.
+Si, et seulement si, aucun passage ne permet de repondre, reponds exactement :
 "Je ne trouve pas cette information dans le document fourni." """
 
 # Regles specifiques au chat : le modele doit s'appuyer sur la conversation pour
 # lever les references (« il », « ce projet », « et son budget ? ») avant de repondre
 # a partir du contexte documentaire. Sans cela, un petit modele ignore l'historique.
-_CHAT_RULES = """Tu reponds a la DERNIERE question de l'utilisateur. Appuie-toi sur
-la conversation pour comprendre les references implicites (« il », « ce projet », etc.),
-puis reponds uniquement a partir du contexte numerote ci-dessous. Apres chaque
-affirmation, cite le ou les passages utilises avec leur numero entre crochets, par
-exemple [1] ou [2][3]. N'invente aucune source. Si l'information n'est pas presente
-dans le contexte, reponds :
+_CHAT_RULES = """Tu reponds en francais a la DERNIERE question de l'utilisateur.
+Appuie-toi sur la conversation pour comprendre les references implicites (« il »,
+« ce projet », etc.). Formule d'abord une reponse REDIGEE en toutes lettres a partir
+du contexte numerote ci-dessous : tu peux synthetiser et reformuler, mais n'ajoute
+aucun fait absent du contexte et n'invente aucune source. Les marqueurs entre
+crochets [1] ou [2][3] ne font que COMPLETER tes phrases : ne reponds JAMAIS
+uniquement par des numeros de citation. Apres chaque affirmation, cite le ou les
+passages correspondants.
+Si, et seulement si, aucun passage ne permet de repondre, reponds exactement :
 "Je ne trouve pas cette information dans le document fourni." """
 
 PROMPT_TEMPLATE = """Tu es un assistant documentaire.
@@ -79,6 +89,60 @@ def build_chat_prompt(messages: list[dict], passages: list[str]) -> str:
         context=_format_context(passages),
         history="\n".join(lines),
     )
+
+
+# --- Mode resume (synthese globale) et routage d'intention -------------------
+
+# Prompt de synthese : utilise pour les questions globales (« de quoi parle... »,
+# « resume »). Contrairement au prompt Q/R, il n'impose ni citations `[n]` ni phrase
+# de refus : il s'agit de degager les themes d'ensemble a partir d'un echantillon de
+# passages couvrant tout le document (cf. pipeline.summarize).
+SUMMARY_PROMPT_TEMPLATE = """Tu es un assistant documentaire.
+Voici des extraits representatifs d'un meme document, donnes dans l'ordre, du debut
+a la fin. Redige en francais une synthese claire et structuree de ce dont parle le
+document : les themes principaux, les points saillants et, si pertinent, leur
+enchainement. Reste fidele aux extraits, sans inventer d'informations absentes.
+
+Extraits :
+{context}
+
+{task}
+
+Synthese :"""
+
+# Prompt de routage : quand l'heuristique par mots-cles ne tranche pas, le LLM classe
+# lui-meme l'intention (synthese globale vs reponse factuelle). Reponse en un seul mot
+# pour rester fiable et rapide, meme avec un petit modele.
+ROUTER_PROMPT_TEMPLATE = """Classe l'intention de la question posee sur un document.
+Reponds par UN SEUL mot, sans ponctuation ni explication :
+- RESUME : la question demande une vue d'ensemble, un resume, le sujet global ou les
+  themes du document (ex. « de quoi parle ce document », « resume-moi la video »).
+- FACTUEL : la question porte sur une information precise contenue dans le document.
+
+Question : {question}
+Reponse :"""
+
+
+def build_summary_prompt(passages: list[str], question: str | None = None) -> str:
+    """Assemble le prompt de synthese globale (echantillon large -> resume).
+
+    Si `question` est fournie, elle est rappelee au modele pour orienter la synthese ;
+    sinon on demande une synthese generale du document.
+    """
+    task = (
+        f"Question de l'utilisateur : {question.strip()}"
+        if question and question.strip()
+        else "Redige la synthese generale du document."
+    )
+    return SUMMARY_PROMPT_TEMPLATE.format(
+        context=_format_context(passages),
+        task=task,
+    )
+
+
+def build_router_prompt(question: str) -> str:
+    """Assemble le prompt de classification d'intention (resume vs factuel)."""
+    return ROUTER_PROMPT_TEMPLATE.format(question=question.strip())
 
 
 _CITATION_RE = re.compile(r"\[(\d+)\]")

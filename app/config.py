@@ -29,6 +29,16 @@ class Settings(BaseSettings):
     # Modele par defaut : Gemma 3 (~4B). Plus capable que qwen2.5:0.5b (meilleures
     # citations, coreference, grande fenetre de contexte).
     ollama_model: str = "gemma3:latest"
+    # Fenetre de contexte cote Ollama (num_ctx). Ollama plafonne par defaut a ~4096
+    # tokens QUELLE QUE SOIT la capacite du modele : sans ce reglage, un prompt a fort
+    # top_k ou une synthese globale serait tronque en silence. Gemma 3 accepte jusqu'a
+    # 131072 tokens ; 8192 est un compromis qualite/vitesse/RAM raisonnable.
+    ollama_num_ctx: int = 8192
+    # Temperature de generation. Le Modelfile de Gemma 3 fixe 1.0 par defaut, ce qui
+    # est trop eleve pour du RAG : reponses instables, parfois degenerees (le modele
+    # « des fois » ne cite que les passages [1][2] sans rediger de reponse). Une valeur
+    # basse ancre la reponse au contexte et fiabilise la sortie.
+    ollama_temperature: float = 0.2
 
     # --- Embeddings ---
     embedding_model: str = (
@@ -38,8 +48,15 @@ class Settings(BaseSettings):
     # --- Parametres RAG ---
     chunk_size: int = 800
     chunk_overlap: int = 120
-    # Nombre de passages transmis au LLM (releve : gemma3 gere une grande fenetre).
-    top_k: int = 6
+    # Nombre de passages transmis au LLM (releve : gemma3 gere une grande fenetre,
+    # cf. ollama_num_ctx). Pilotable par l'env (TOP_K).
+    top_k: int = 10
+
+    # --- Mode resume (questions globales : « de quoi parle... », « resume ») -------
+    # Le retrieval top-k (pertinence locale) est inadapte aux questions de synthese :
+    # on echantillonne plutot des passages repartis sur TOUT le document. Ce reglage
+    # fixe le nombre de passages echantillonnes (couverture debut -> fin).
+    summary_sample_size: int = 24
 
     # --- Retrieval avance (voir app/rag/retrieval.py) ------------------------
     # Nombre de candidats recuperes AVANT reranking (« retrieve large, rerank »).

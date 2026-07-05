@@ -71,6 +71,16 @@ def test_retrieval_query_single_turn_is_the_question():
     assert _retrieval_query(messages) == "Une seule question"
 
 
+def test_keyword_is_summary_detects_global_questions():
+    from app.rag.pipeline import _keyword_is_summary
+
+    assert _keyword_is_summary("Resume-moi la video")
+    assert _keyword_is_summary("De quoi parle ce document ?")
+    assert _keyword_is_summary("Quels sont les themes abordes ?")
+    # Une question factuelle ne doit PAS matcher l'heuristique (elle ira au routeur LLM).
+    assert not _keyword_is_summary("Quelle imprimante 3D est citee ?")
+
+
 # --- Fixture : store ChromaDB ephemere + LLM stub ---------------------------
 
 
@@ -206,6 +216,29 @@ def test_sources_carry_sequential_cite_index(store):
     result = pipeline.answer_question("une question", workspace="alpha", top_k=4)
     cites = [source["cite"] for source in result["sources"]]
     assert cites == list(range(1, len(result["sources"]) + 1))
+
+
+def test_summary_question_routes_to_global_synthesis(store):
+    # Un document a plusieurs passages : une question de resume doit echantillonner
+    # tout le document (mode synthese) plutot que le retrieval top-k classique.
+    pipeline.index_document("doc.txt", "phrase de contenu " * 300, workspace="alpha")
+
+    result = pipeline.answer_question("Resume-moi ce document", workspace="alpha")
+
+    assert result["answer"] == "REPONSE STUB"  # le LLM (stub) a bien ete appele
+    assert result["sources"]  # des passages echantillonnes sont renvoyes comme sources
+    assert result["cited"] == []  # mode resume : pas de citations `[n]`
+    assert {source["filename"] for source in result["sources"]} == {"doc.txt"}
+
+
+def test_summary_route_is_scoped_to_workspace(store):
+    # Le mode resume reste cloisonne : jamais de fuite d'un autre workspace.
+    pipeline.index_document("alpha.txt", "le chat dort. " * 80, workspace="alpha")
+    pipeline.index_document("beta.txt", "le chien court. " * 80, workspace="beta")
+
+    result = pipeline.answer_question("De quoi parle ce document ?", workspace="alpha")
+
+    assert {source["filename"] for source in result["sources"]} == {"alpha.txt"}
 
 
 def test_answer_chat_uses_last_user_message(store):

@@ -9,7 +9,13 @@ from langchain_ollama import OllamaLLM
 from app.config import settings
 from app.rag import retrieval
 from app.rag.chunking import split_text
-from app.rag.prompt import build_chat_prompt, build_prompt, cited_indices
+from app.rag.prompt import (
+    build_chat_prompt,
+    build_prompt,
+    build_router_prompt,
+    build_summary_prompt,
+    cited_indices,
+)
 from app.rag.vectorstore import get_vectorstore
 
 # Longueur de l'extrait conserve dans les metadonnees pour l'affichage des sources.
@@ -45,11 +51,28 @@ def _where(
     return clauses[0] if len(clauses) == 1 else {"$and": clauses}
 
 
-def get_llm(model: str | None = None) -> OllamaLLM:
-    """Retourne le client LLM Ollama pour `model` (defaut : settings.ollama_model)."""
+def get_llm(
+    model: str | None = None,
+    num_ctx: int | None = None,
+    temperature: float | None = None,
+) -> OllamaLLM:
+    """Retourne le client LLM Ollama pour `model` (defaut : settings.ollama_model).
+
+    `num_ctx` fixe la fenetre de contexte cote Ollama (defaut : settings.ollama_num_ctx).
+    Sans ce reglage, Ollama plafonne a ~4096 tokens quelle que soit la capacite du
+    modele, ce qui tronquerait un prompt a fort top_k ou une synthese globale.
+
+    `temperature` surcharge la temperature de generation (defaut :
+    settings.ollama_temperature). On teste `is None` explicitement pour autoriser 0.0
+    (generation deterministe, ex. pour le routeur d'intention).
+    """
     return OllamaLLM(
         model=model or settings.ollama_model,
         base_url=settings.ollama_base_url,
+        num_ctx=num_ctx or settings.ollama_num_ctx,
+        temperature=(
+            settings.ollama_temperature if temperature is None else temperature
+        ),
     )
 
 
@@ -262,6 +285,145 @@ def _search_sources(question: str, workspace: str, k: int, filename=None, filena
     return passages, sources
 
 
+# --- Mode resume : routage d'intention + synthese globale --------------------
+
+# Mots-cles declenchant SANS ambiguite une synthese globale (route directe, sans
+# appel LLM). Les autres cas sont tranches par le routeur LLM (cf. _route_is_summary).
+_SUMMARY_KEYWORDS = (
+    "resume",  # resume / resumer / resumé (sous-chaine commune)
+    "de quoi parle",
+    "de quoi ca parle",
+    "de quoi ça parle",
+    "parle de quoi",
+    "sujet principal",
+    "sujet de la",
+    "sujet du",
+    "themes",
+    "thèmes",
+    "synthese",
+    "synthèse",
+    "vue d'ensemble",
+    "apercu",
+    "aperçu",
+    "grandes lignes",
+    "idee generale",
+    "idée générale",
+    "de quoi il s'agit",
+    "de quoi s'agit",
+)
+
+
+def _keyword_is_summary(question: str) -> bool:
+    """Heuristique : la question demande-t-elle clairement une synthese globale ?"""
+    q = (question or "").lower()
+    return any(keyword in q for keyword in _SUMMARY_KEYWORDS)
+
+
+def _llm_route_is_summary(question: str, model: str) -> bool:
+    """Routeur LLM : demande au modele de classer l'intention (resume vs factuel).
+
+    Repli sur False (reponse factuelle = RAG classique) en cas de reponse inattendue
+    ou d'erreur : le comportement par defaut reste le retrieval top-k.
+    """
+    try:
+        # Temperature 0 : classification stable (RESUME/FACTUEL), pas de creativite.
+        verdict = get_llm(model, temperature=0.0).invoke(build_router_prompt(question))
+    except Exception:
+        return False
+    low = (verdict or "").strip().lower()
+    return "resum" in low or "résum" in low
+
+
+def _route_is_summary(question: str, model: str) -> bool:
+    """Routage hybride : mots-cles evidents d'abord, sinon routeur LLM (Gemma decide)."""
+    if _keyword_is_summary(question):
+        return True
+    return _llm_route_is_summary(question, model)
+
+
+def _order_index(metadata: dict, fallback: int) -> tuple[int, float]:
+    """Cle de tri chronologique d'un chunk : instant `start` sinon `passage_id`."""
+    metadata = metadata or {}
+    start = metadata.get("start")
+    if start is not None:
+        return (0, float(start))
+    passage_id = metadata.get("passage_id")
+    if passage_id is not None:
+        return (0, float(passage_id))
+    return (1, float(fallback))
+
+
+def _sample_passages(store, where: dict, n: int) -> tuple[list[str], list[dict]]:
+    """Echantillonne jusqu'a `n` passages repartis sur TOUT le perimetre.
+
+    Recupere les chunks du perimetre, les ordonne (instant `start` pour un transcript,
+    sinon `passage_id`), puis retient `n` passages equidistants du debut a la fin.
+    Convient a une synthese globale (couverture du document > pertinence locale).
+    """
+    data = store._collection.get(where=where, include=["documents", "metadatas"])
+    documents = data.get("documents") or []
+    metadatas = data.get("metadatas") or []
+    if not documents:
+        return [], []
+
+    order = sorted(
+        range(len(documents)),
+        key=lambda i: _order_index(metadatas[i], i),
+    )
+    if len(order) <= n:
+        chosen = order
+    else:
+        step = len(order) / n
+        chosen = [order[int(rank * step)] for rank in range(n)]
+
+    passages = [documents[i] for i in chosen]
+    metas = [metadatas[i] or {} for i in chosen]
+    return passages, metas
+
+
+def summarize(
+    workspace: str,
+    question: str | None = None,
+    model: str | None = None,
+    filename: str | None = None,
+    filenames: list[str] | None = None,
+) -> dict:
+    """Synthetise le document (ou le perimetre) a partir d'un echantillon large.
+
+    Repond aux questions globales (« de quoi parle... », « resume ») pour lesquelles le
+    retrieval top-k est inadapte : on echantillonne des passages couvrant tout le
+    document (cf. `_sample_passages`) et on demande une synthese dediee (sans citation
+    ni phrase de refus). Meme forme de retour que `answer_question`.
+    """
+    from langchain_core.documents import Document
+
+    model_name = model or settings.ollama_model
+    store = get_vectorstore()
+    where = _where(workspace, filename, filenames)
+    passages, metas = _sample_passages(store, where, settings.summary_sample_size)
+
+    if not passages:
+        return {
+            "answer": "Je ne trouve pas cette information dans le document fourni.",
+            "sources": [],
+            "model": model_name,
+            "cited": [],
+        }
+
+    answer = get_llm(model_name).invoke(build_summary_prompt(passages, question))
+    docs = [Document(page_content=p, metadata=m) for p, m in zip(passages, metas)]
+    sources = [
+        {**_build_source(document, None), "cite": i + 1}
+        for i, document in enumerate(docs)
+    ]
+    return {
+        "answer": answer,
+        "sources": sources,
+        "model": model_name,
+        "cited": [],
+    }
+
+
 def answer_question(
     question: str,
     workspace: str,
@@ -276,12 +438,20 @@ def answer_question(
     document (`filename`) ou a un sous-ensemble (`filenames`) : jamais de fuite
     entre espaces de travail.
 
+    Les questions **globales** (« de quoi parle... », « resume ») sont routees vers
+    `summarize` (synthese sur un echantillon couvrant tout le document) ; les autres
+    suivent le RAG top-k classique.
+
     `model` selectionne le modele Ollama repondant (defaut : settings.ollama_model).
     Le modele reellement utilise est renvoye dans la cle "model" ; "cited" liste les
     numeros de passages `[n]` effectivement cites par le modele.
     """
     k = top_k or settings.top_k
     model_name = model or settings.ollama_model
+
+    if _route_is_summary(question, model_name):
+        return summarize(workspace, question, model_name, filename, filenames)
+
     passages, sources = _search_sources(question, workspace, k, filename, filenames)
 
     prompt = build_prompt(question, passages)
@@ -335,6 +505,13 @@ def answer_chat(
     """
     k = top_k or settings.top_k
     model_name = model or settings.ollama_model
+
+    # Question globale (« de quoi parle... », « resume ») : synthese sur tout le
+    # document plutot que retrieval top-k. Le routage porte sur la DERNIERE question.
+    latest = _latest_user_message(messages)
+    if _route_is_summary(latest, model_name):
+        return summarize(workspace, latest, model_name, filenames=filenames)
+
     # Retrieval pilote par les dernieres questions utilisateur (coreference sur les
     # follow-ups) ; la generation, elle, recoit tout l'historique recent.
     query = _retrieval_query(messages)

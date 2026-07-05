@@ -1,6 +1,12 @@
 """Tests de la construction du prompt."""
 
-from app.rag.prompt import build_chat_prompt, build_prompt, cited_indices
+from app.rag.prompt import (
+    build_chat_prompt,
+    build_prompt,
+    build_router_prompt,
+    build_summary_prompt,
+    cited_indices,
+)
 
 
 def test_prompt_contains_question_and_context():
@@ -21,6 +27,14 @@ def test_prompt_numbers_context_and_requests_citation():
     assert "cite" in prompt.lower() and "crochets" in prompt.lower()  # consigne
 
 
+def test_prompt_forbids_citation_only_answers():
+    # Garde-fou : le prompt doit interdire de repondre uniquement par des numeros de
+    # citation (bug observe : le petit modele cite [1][2] sans rediger de reponse).
+    prompt = build_prompt("Question", ["contexte"]).lower()
+    assert "jamais uniquement" in prompt
+    assert "redigee" in prompt  # exige une reponse formulee en toutes lettres
+
+
 def test_build_chat_prompt_includes_recent_history():
     messages = [
         {"role": "user", "content": "Quelle est la capitale ?"},
@@ -31,6 +45,27 @@ def test_build_chat_prompt_includes_recent_history():
     assert "Quelle est la capitale ?" in prompt  # tour precedent conserve
     assert "Et sa population ?" in prompt  # question courante
     assert "Utilisateur:" in prompt and "Assistant:" in prompt
+
+
+def test_build_summary_prompt_includes_passages_and_question():
+    prompt = build_summary_prompt(["extrait un", "extrait deux"], "de quoi parle ce doc ?")
+    assert "extrait un" in prompt and "extrait deux" in prompt
+    assert "de quoi parle ce doc ?" in prompt  # question rappelee pour orienter
+    assert "[1]" in prompt and "[2]" in prompt  # extraits numerotes
+
+
+def test_build_summary_prompt_without_question_asks_general_summary():
+    prompt = build_summary_prompt(["seul extrait"])
+    assert "seul extrait" in prompt
+    # Sans question : consigne de synthese generale (pas de phrase de refus imposee).
+    assert "synthese generale" in prompt.lower()
+    assert "Je ne trouve pas cette information" not in prompt
+
+
+def test_build_router_prompt_asks_for_single_label():
+    prompt = build_router_prompt("resume-moi la video")
+    assert "resume-moi la video" in prompt
+    assert "RESUME" in prompt and "FACTUEL" in prompt  # les deux etiquettes proposees
 
 
 def test_cited_indices_filters_out_of_range_and_dedupes():
