@@ -27,13 +27,24 @@ from app.api.schemas import (
     IndexResponse,
     IngestYoutubeRequest,
     IngestYoutubeResponse,
+    MessageInfo,
+    MessagesResponse,
     ModelInfo,
     ModelsResponse,
+    NotebookCreate,
+    NotebookInfo,
+    NotebookRename,
+    NotebooksResponse,
+    NoteCreate,
+    NoteInfo,
+    NotesResponse,
     ResetRequest,
     ResetResponse,
     WorkspacesResponse,
 )
 from app.config import settings
+from app.db import repository
+from app.db.database import session_scope
 from app.rag import loaders, pipeline, transcripts
 from app.storage import minio_client
 from app.workspaces import normalize_workspace
@@ -437,9 +448,203 @@ def chat(req: ChatRequest) -> ChatResponse:
         model=req.model,
         filenames=req.filenames,
     )
+    _persist_chat_turn(ws, req.messages[-1].content, result)
     return ChatResponse(
         answer=result["answer"],
         sources=result["sources"],
         model=result["model"],
         cited=result.get("cited"),
     )
+
+
+def _persist_chat_turn(workspace: str, question: str, result: dict) -> None:
+    """Sauvegarde best-effort du tour (question + reponse) ; n'echoue jamais le chat.
+
+    Si la base est injoignable, on ignore silencieusement : le RAG reste fonctionnel,
+    seule la persistance de l'historique est perdue.
+    """
+    try:
+        with session_scope() as session:
+            repository.get_or_create_notebook(session, workspace)
+            repository.add_message(session, workspace, "user", question)
+            repository.add_message(
+                session,
+                workspace,
+                "assistant",
+                result["answer"],
+                sources=result.get("sources"),
+                cited=result.get("cited"),
+                model=result.get("model"),
+            )
+    except Exception:
+        pass
+
+
+# --- Notebooks / conversations / notes (persistance Postgres) ----------------
+
+
+def _notebook_info(notebook) -> NotebookInfo:
+    return NotebookInfo(
+        id=notebook.id, title=notebook.title, created_at=notebook.created_at
+    )
+
+
+@router.get("/notebooks", response_model=NotebooksResponse, tags=["notebooks"])
+def list_notebooks() -> NotebooksResponse:
+    """Liste les notebooks persistes, en rattachant les workspaces deja indexes.
+
+    Backfill paresseux : tout workspace present dans ChromaDB mais absent de la base
+    recoit une entree notebook (title = id). Si la base est injoignable, on renvoie
+    une liste degradee derivee des workspaces (sans persistance).
+    """
+    try:
+        workspace_ids = pipeline.list_workspaces()
+    except Exception:
+        workspace_ids = []
+    try:
+        with session_scope() as session:
+            repository.backfill_notebooks(session, workspace_ids)
+            notebooks = [_notebook_info(n) for n in repository.list_notebooks(session)]
+    except Exception:
+        notebooks = [NotebookInfo(id=ws, title=ws) for ws in sorted(workspace_ids)]
+    return NotebooksResponse(notebooks=notebooks, default=settings.default_workspace)
+
+
+@router.post("/notebooks", response_model=NotebookInfo, tags=["notebooks"])
+def create_notebook(req: NotebookCreate) -> NotebookInfo:
+    """Cree un notebook a partir d'un titre libre (id = slug sur et unique)."""
+    title = (req.title or "").strip()
+    if not title:
+        raise HTTPException(status_code=400, detail="Titre de notebook requis.")
+    try:
+        with session_scope() as session:
+            return _notebook_info(repository.create_notebook(session, title))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503, detail=f"Base de donnees injoignable : {exc}"
+        ) from exc
+
+
+@router.patch("/notebooks/{notebook_id}", response_model=NotebookInfo, tags=["notebooks"])
+def rename_notebook(notebook_id: str, req: NotebookRename) -> NotebookInfo:
+    """Renomme un notebook (titre libre) ; l'id/workspace ne change pas."""
+    ws = _resolve_workspace(notebook_id)
+    try:
+        with session_scope() as session:
+            notebook = repository.rename_notebook(session, ws, req.title)
+            if notebook is None:
+                raise HTTPException(status_code=404, detail="Notebook introuvable.")
+            return _notebook_info(notebook)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503, detail=f"Base de donnees injoignable : {exc}"
+        ) from exc
+
+
+@router.delete("/notebooks/{notebook_id}", tags=["notebooks"])
+def delete_notebook(notebook_id: str) -> dict:
+    """Supprime un notebook : son index ChromaDB puis sa ligne (cascade messages/notes)."""
+    ws = _resolve_workspace(notebook_id)
+    pipeline.reset_index(ws)  # vide la base vectorielle du workspace
+    try:
+        with session_scope() as session:
+            repository.delete_notebook(session, ws)
+    except Exception:
+        pass
+    return {"deleted": ws}
+
+
+@router.get(
+    "/notebooks/{notebook_id}/messages",
+    response_model=MessagesResponse,
+    tags=["notebooks"],
+)
+def get_messages(notebook_id: str) -> MessagesResponse:
+    """Historique de conversation persiste (pour restaurer le chat a l'ouverture)."""
+    ws = _resolve_workspace(notebook_id)
+    try:
+        with session_scope() as session:
+            messages = [
+                MessageInfo(
+                    id=m.id,
+                    role=m.role,
+                    content=m.content,
+                    sources=m.sources,
+                    cited=m.cited,
+                    model=m.model,
+                    created_at=m.created_at,
+                )
+                for m in repository.list_messages(session, ws)
+            ]
+    except Exception:
+        messages = []
+    return MessagesResponse(notebook_id=ws, messages=messages)
+
+
+@router.delete("/notebooks/{notebook_id}/messages", tags=["notebooks"])
+def clear_messages(notebook_id: str) -> dict:
+    """Efface l'historique de conversation d'un notebook."""
+    ws = _resolve_workspace(notebook_id)
+    removed = 0
+    try:
+        with session_scope() as session:
+            removed = repository.clear_messages(session, ws)
+    except Exception:
+        pass
+    return {"notebook_id": ws, "messages_removed": removed}
+
+
+@router.get(
+    "/notebooks/{notebook_id}/notes", response_model=NotesResponse, tags=["notebooks"]
+)
+def get_notes(notebook_id: str) -> NotesResponse:
+    """Notes (panneau Studio) persistees d'un notebook."""
+    ws = _resolve_workspace(notebook_id)
+    try:
+        with session_scope() as session:
+            notes = [
+                NoteInfo(id=n.id, text=n.text, created_at=n.created_at)
+                for n in repository.list_notes(session, ws)
+            ]
+    except Exception:
+        notes = []
+    return NotesResponse(notebook_id=ws, notes=notes)
+
+
+@router.post(
+    "/notebooks/{notebook_id}/notes", response_model=NoteInfo, tags=["notebooks"]
+)
+def create_note(notebook_id: str, req: NoteCreate) -> NoteInfo:
+    """Ajoute une note a un notebook."""
+    ws = _resolve_workspace(notebook_id)
+    text = (req.text or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Note vide.")
+    try:
+        with session_scope() as session:
+            repository.get_or_create_notebook(session, ws)
+            note = repository.add_note(session, ws, text)
+            return NoteInfo(id=note.id, text=note.text, created_at=note.created_at)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503, detail=f"Base de donnees injoignable : {exc}"
+        ) from exc
+
+
+@router.delete("/notebooks/{notebook_id}/notes/{note_id}", tags=["notebooks"])
+def delete_note(notebook_id: str, note_id: int) -> dict:
+    """Supprime une note d'un notebook."""
+    ws = _resolve_workspace(notebook_id)
+    deleted = False
+    try:
+        with session_scope() as session:
+            deleted = repository.delete_note(session, ws, note_id)
+    except Exception:
+        pass
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Note introuvable.")
+    return {"deleted": note_id}

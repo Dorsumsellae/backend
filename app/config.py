@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     # Workspace utilise quand aucun n'est precise (cloisonnement logique des documents).
     default_workspace: str = "default"
 
+    # --- Base de donnees (metadonnees applicatives : notebooks, chat, notes) ---
+    # Postgres par defaut (service `postgres` du docker-compose). La persistance est
+    # best-effort : si la base est injoignable, le RAG (upload/index/chat) fonctionne
+    # quand meme, seule la sauvegarde des notebooks/conversations/notes est perdue.
+    database_url: str = "postgresql+psycopg2://rag:rag@postgres:5432/rag"
+
     # Service ASR (transcription audio) appele en fallback quand une video YouTube
     # n'a pas de sous-titres. Vide => fallback desactive (on renvoie une erreur claire).
     asr_service_url: str = ""

@@ -1,5 +1,6 @@
 """Schemas Pydantic pour les requetes et reponses de l'API."""
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, Field
@@ -238,3 +239,57 @@ class ModelInfo(BaseModel):
 class ModelsResponse(BaseModel):
     models: list[ModelInfo]
     default: str = Field(..., description="Modele utilise quand aucun n'est precise.")
+
+
+# --- Notebooks / conversations / notes (persistance Postgres) ----------------
+
+
+class NotebookInfo(BaseModel):
+    id: str = Field(..., description="Identifiant technique (slug, = workspace).")
+    title: str = Field(..., description="Titre libre affiche dans l'UI.")
+    created_at: datetime | None = Field(
+        None, description="Date de creation (absente en mode degrade sans base)."
+    )
+
+
+class NotebooksResponse(BaseModel):
+    notebooks: list[NotebookInfo]
+    default: str = Field(..., description="Workspace utilise quand aucun n'est precise.")
+
+
+class NotebookCreate(BaseModel):
+    title: str = Field(..., description="Titre libre du notebook (ex. 'Warhammer paint').")
+
+
+class NotebookRename(BaseModel):
+    title: str = Field(..., description="Nouveau titre du notebook.")
+
+
+class MessageInfo(BaseModel):
+    id: int
+    role: Literal["user", "assistant"]
+    content: str
+    sources: list[dict] | None = None
+    cited: list[int] | None = None
+    model: str | None = None
+    created_at: datetime | None = None
+
+
+class MessagesResponse(BaseModel):
+    notebook_id: str
+    messages: list[MessageInfo]
+
+
+class NoteInfo(BaseModel):
+    id: int
+    text: str
+    created_at: datetime | None = None
+
+
+class NoteCreate(BaseModel):
+    text: str = Field(..., description="Contenu de la note.")
+
+
+class NotesResponse(BaseModel):
+    notebook_id: str
+    notes: list[NoteInfo]
