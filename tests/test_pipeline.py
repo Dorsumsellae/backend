@@ -21,7 +21,7 @@ pytest.importorskip("langchain_huggingface")
 from langchain_core.embeddings import Embeddings
 
 from app.rag import pipeline
-from app.rag.pipeline import _where
+from app.rag.pipeline import _retrieval_query, _where
 
 # --- Helper _where (fonction pure) ------------------------------------------
 
@@ -52,6 +52,23 @@ def test_where_single_filename_in_list_is_equality():
 def test_where_empty_filenames_is_workspace_only():
     # Liste vide => aucune clause filename (jamais {"$in": []} qui ne matcherait rien).
     assert _where("ws", filenames=[]) == {"workspace": "ws"}
+
+
+def test_retrieval_query_injects_prior_user_turns():
+    # Un follow-up elliptique doit voir le sujet des questions precedentes reinjecte.
+    messages = [
+        {"role": "user", "content": "Quel est le budget du projet Zephyr ?"},
+        {"role": "assistant", "content": "3 millions d'euros."},
+        {"role": "user", "content": "Et qui l'a lance ?"},
+    ]
+    query = _retrieval_query(messages)
+    assert "Zephyr" in query  # sujet du 1er tour present dans la requete du follow-up
+    assert "lance" in query  # question courante aussi
+
+
+def test_retrieval_query_single_turn_is_the_question():
+    messages = [{"role": "user", "content": "Une seule question"}]
+    assert _retrieval_query(messages) == "Une seule question"
 
 
 # --- Fixture : store ChromaDB ephemere + LLM stub ---------------------------

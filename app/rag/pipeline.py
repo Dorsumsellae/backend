@@ -293,11 +293,28 @@ def answer_question(
 
 
 def _latest_user_message(messages: list[dict]) -> str:
-    """Retourne le contenu du dernier message de role 'user' (pilote le retrieval)."""
+    """Retourne le contenu du dernier message de role 'user'."""
     for message in reversed(messages):
         if message.get("role") == "user":
             return message.get("content") or ""
     return ""
+
+
+def _retrieval_query(messages: list[dict]) -> str:
+    """Construit la requete de recherche d'un tour de chat.
+
+    On concatene les dernieres questions **utilisateur** (jusqu'a 3). La question
+    courante peut etre elliptique (« et qui l'a lance ? ») et ne plus contenir le
+    sujet : y adjoindre les questions precedentes reinjecte les termes de contexte
+    (coreference) et fiabilise la recherche des passages sur les follow-ups.
+    """
+    user_turns = [
+        (m.get("content") or "").strip()
+        for m in messages
+        if m.get("role") == "user"
+    ]
+    user_turns = [turn for turn in user_turns if turn]
+    return " ".join(user_turns[-3:]) or _latest_user_message(messages)
 
 
 def answer_chat(
@@ -316,8 +333,10 @@ def answer_chat(
     """
     k = top_k or settings.top_k
     model_name = model or settings.ollama_model
-    question = _latest_user_message(messages)
-    passages, sources = _search_sources(question, workspace, k, filenames=filenames)
+    # Retrieval pilote par les dernieres questions utilisateur (coreference sur les
+    # follow-ups) ; la generation, elle, recoit tout l'historique recent.
+    query = _retrieval_query(messages)
+    passages, sources = _search_sources(query, workspace, k, filenames=filenames)
 
     prompt = build_chat_prompt(messages, passages)
     answer = get_llm(model_name).invoke(prompt)

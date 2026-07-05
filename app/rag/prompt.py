@@ -11,6 +11,17 @@ entre crochets, par exemple [1] ou [2][3]. N'invente aucune source.
 Si l'information n'est pas presente dans le contexte, reponds :
 "Je ne trouve pas cette information dans le document fourni." """
 
+# Regles specifiques au chat : le modele doit s'appuyer sur la conversation pour
+# lever les references (« il », « ce projet », « et son budget ? ») avant de repondre
+# a partir du contexte documentaire. Sans cela, un petit modele ignore l'historique.
+_CHAT_RULES = """Tu reponds a la DERNIERE question de l'utilisateur. Appuie-toi sur
+la conversation pour comprendre les references implicites (« il », « ce projet », etc.),
+puis reponds uniquement a partir du contexte numerote ci-dessous. Apres chaque
+affirmation, cite le ou les passages utilises avec leur numero entre crochets, par
+exemple [1] ou [2][3]. N'invente aucune source. Si l'information n'est pas presente
+dans le contexte, reponds :
+"Je ne trouve pas cette information dans le document fourni." """
+
 PROMPT_TEMPLATE = """Tu es un assistant documentaire.
 {rules}
 
@@ -64,7 +75,7 @@ def build_chat_prompt(messages: list[dict], passages: list[str]) -> str:
         lines.append(f"{role}: {(message.get('content') or '').strip()}")
     lines.append("Assistant:")
     return CHAT_PROMPT_TEMPLATE.format(
-        rules=_CITATION_RULES,
+        rules=_CHAT_RULES,
         context=_format_context(passages),
         history="\n".join(lines),
     )
