@@ -46,6 +46,25 @@ def _resolve_workspace(value: str | None) -> str:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+def _http_error_detail(exc: requests.RequestException) -> str:
+    """Extrait le message d'erreur le plus parlant d'une exception `requests`.
+
+    Quand le service distant repond un corps JSON `{"detail": "..."}` (cas FastAPI),
+    on privilegie ce message ; sinon on retombe sur le texte brut de l'exception.
+    Le frontend porte le meme utilitaire (`api_client.error_detail`) : les deux
+    services etant deployes separement, ils ne peuvent pas partager ce code sans
+    introduire un package commun.
+    """
+    detail = str(exc)
+    response = getattr(exc, "response", None)
+    if response is not None:
+        try:
+            detail = response.json().get("detail", detail)
+        except ValueError:
+            pass
+    return detail
+
+
 @router.get("/health", tags=["health"])
 def health() -> dict:
     """Endpoint de sante (utilise par la CI et le healthcheck Docker)."""
@@ -232,14 +251,9 @@ def _asr_transcribe(
         )
         response.raise_for_status()
     except requests.RequestException as exc:
-        detail = str(exc)
-        if getattr(exc, "response", None) is not None:
-            try:
-                detail = exc.response.json().get("detail", detail)
-            except ValueError:
-                pass
         raise HTTPException(
-            status_code=502, detail=f"Transcription ASR echouee : {detail}"
+            status_code=502,
+            detail=f"Transcription ASR echouee : {_http_error_detail(exc)}",
         ) from exc
 
     data = response.json()
