@@ -1,0 +1,17 @@
+# Normalise les fins de ligne : LF dans le depot, conversion selon l'OS au
+# checkout. Supprime les avertissements CRLF/LF et les diffs parasites entre
+# plateformes (Windows/Linux/macOS).
+* text=auto
+
+# Fichiers binaires : aucune conversion de fins de ligne (evite toute corruption,
+# notamment la fixture PDF des tests).
+*.pdf   binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.zip   binary
+*.gz    binary
+*.woff  binary
+*.woff2 binary
