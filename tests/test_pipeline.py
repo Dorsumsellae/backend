@@ -114,6 +114,9 @@ def store(monkeypatch):
     )
     monkeypatch.setattr(pipeline, "get_vectorstore", lambda: vectorstore)
     monkeypatch.setattr(pipeline, "get_llm", lambda model=None: _StubLLM())
+    # Desactive le reranker en test (evite de telecharger le cross-encoder) ; MMR et
+    # BM25 restent actifs et sont donc exerces sur le store ephemere.
+    monkeypatch.setattr(pipeline.settings, "use_reranker", False)
     return vectorstore
 
 

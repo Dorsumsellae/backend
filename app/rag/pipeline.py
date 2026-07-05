@@ -7,6 +7,7 @@ Les fonctions sont volontairement laissees a completer (coeur du TP).
 from langchain_ollama import OllamaLLM
 
 from app.config import settings
+from app.rag import retrieval
 from app.rag.chunking import split_text
 from app.rag.prompt import build_chat_prompt, build_prompt, cited_indices
 from app.rag.vectorstore import get_vectorstore
@@ -243,19 +244,20 @@ def reset_index(workspace: str, filename: str | None = None) -> dict:
 
 
 def _search_sources(question: str, workspace: str, k: int, filename=None, filenames=None):
-    """Recherche les passages proches et renvoie (passages_texte, sources).
+    """Recherche les passages pertinents et renvoie (passages_texte, sources).
 
-    Chaque source recoit un index de citation `cite` (1-based) egal a sa position
-    dans le classement de similarite : il correspond au numero `[n]` du passage
-    dans le contexte du prompt, ce qui permet au front de lier reponse et sources.
+    Le retrieval avance (dense/MMR + BM25/RRF -> reranking -> reorder) est delegue
+    a `app.rag.retrieval`. Chaque source recoit un index de citation `cite` (1-based)
+    egal a sa position dans le contexte du prompt, ce qui permet au front de lier
+    reponse et sources.
     """
-    results = get_vectorstore().similarity_search_with_score(
-        question, k=k, filter=_where(workspace, filename, filenames)
-    )
-    passages = [document.page_content for document, _ in results]
+    store = get_vectorstore()
+    where = _where(workspace, filename, filenames)
+    scored = retrieval.retrieve(store, question, k, where)
+    passages = [document.page_content for document, _ in scored]
     sources = [
         {**_build_source(document, score), "cite": i + 1}
-        for i, (document, score) in enumerate(results)
+        for i, (document, score) in enumerate(scored)
     ]
     return passages, sources
 
@@ -355,7 +357,8 @@ def _build_source(document, score) -> dict:
         "filename": metadata.get("filename", ""),
         "passage_id": metadata.get("passage_id", -1),
         "excerpt": metadata.get("excerpt", ""),
-        "score": float(score),
+        # Score de reranking (plus grand = mieux) si reranking actif, sinon None.
+        "score": float(score) if score is not None else None,
     }
     start = metadata.get("start")
     if start is not None:

@@ -10,8 +10,11 @@ langchain-chroma==1.1.0
 langchain-huggingface==1.2.2
 langchain-ollama==1.1.0
 
-# --- Embeddings ---
+# --- Embeddings + reranking (cross-encoder) ---
 sentence-transformers==5.6.0
+
+# --- Recherche hybride : BM25 (mots-cles) fusionne au dense ---
+rank-bm25==0.2.2
 
 # --- Base vectorielle ---
 # NB : le client chromadb et l'image serveur (docker-compose) doivent partager

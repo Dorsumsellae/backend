@@ -26,7 +26,9 @@ class Settings(BaseSettings):
 
     # --- Ollama ---
     ollama_base_url: str = "http://ollama:11434"
-    ollama_model: str = "qwen2.5:0.5b"
+    # Modele par defaut : Gemma 3 (~4B). Plus capable que qwen2.5:0.5b (meilleures
+    # citations, coreference, grande fenetre de contexte).
+    ollama_model: str = "gemma3:latest"
 
     # --- Embeddings ---
     embedding_model: str = (
@@ -36,7 +38,24 @@ class Settings(BaseSettings):
     # --- Parametres RAG ---
     chunk_size: int = 800
     chunk_overlap: int = 120
-    top_k: int = 4
+    # Nombre de passages transmis au LLM (releve : gemma3 gere une grande fenetre).
+    top_k: int = 6
+
+    # --- Retrieval avance (voir app/rag/retrieval.py) ------------------------
+    # Nombre de candidats recuperes AVANT reranking (« retrieve large, rerank »).
+    retrieval_top_n: int = 20
+    # Reranking par cross-encoder : reordonne finement (question, passage), garde top_k.
+    # Modele multilingue leger (~120 Mo, telecharge une fois puis mis en cache).
+    use_reranker: bool = True
+    reranker_model: str = "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
+    # Recherche hybride : fusion dense (embeddings) + BM25 (mots-cles) par RRF.
+    use_hybrid: bool = True
+    rrf_k: int = 60
+    # MMR : diversifie les candidats denses (penalise les passages redondants).
+    use_mmr: bool = True
+    mmr_lambda: float = 0.5
+    # Reorder anti « lost-in-the-middle » : meilleurs passages en debut ET fin du prompt.
+    reorder_lost_in_middle: bool = True
 
     # Strategie de decoupage par defaut (surchargeable par requete) :
     #   "fixed"     -> taille fixe avec recouvrement (autonome, sans LangChain).
